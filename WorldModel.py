@@ -7,14 +7,12 @@ class WorldModel:
         self.height = height
         self.running = True
 
-        # Настройки мира
         self.COLOR_BG = (30, 30, 30)
         self.COLOR_GRID = (200, 200, 200)
         self.COLOR_MARKER = (255, 100, 100)
         self.WORLD_SIZE = 20
         self.CELL_SIZE = 40
 
-        # Параметры камеры
         self.cam_x = 0.0
         self.cam_z = 0.0
         self.yaw = 45.0
@@ -26,12 +24,11 @@ class WorldModel:
         self.MIN_ZOOM = 0.2
         self.MAX_ZOOM = 3.0
 
-        # Красные ячейки (костры)
+        # Красные ячейки
         self.red_cells = [
             (-6, -6), (-4, -4), (-8, 0), (2, 4), (6, -2), (0, 8), (-8, -8)
         ]
 
-        # Инициализация Pygame
         pygame.init()
         self.screen = pygame.display.set_mode((self.width, self.height))
         pygame.display.set_caption("AGI Virtual World (Pygame)")
@@ -64,6 +61,18 @@ class WorldModel:
     def get_scale(self):
         return self.CELL_SIZE * self.zoom
 
+    # ---------- Методы проверки ----------
+    def is_cell_red(self, x, z):
+        half = 1
+        for (cx, cz) in self.red_cells:
+            if abs(x - cx) < half and abs(z - cz) < half:
+                return True
+        return False
+
+    def is_within_world(self, x, z):
+        half = self.WORLD_SIZE // 2
+        return -half <= x <= half and -half <= z <= half
+
     # ---------- Отрисовка слоёв ----------
     def draw_red_cells(self):
         half = 1
@@ -79,7 +88,6 @@ class WorldModel:
 
     def draw_grid(self):
         half = self.WORLD_SIZE // 2
-        # Линии сетки
         for z in range(-half, half + 1, 2):
             x1, y1 = self.world_to_screen(-half, z, 0)
             x2, y2 = self.world_to_screen(half, z, 0)
@@ -89,24 +97,24 @@ class WorldModel:
             x2, y2 = self.world_to_screen(x, half, 0)
             pygame.draw.line(self.screen, self.COLOR_GRID, (x1, y1), (x2, y2), 1)
 
-        # Маркеры в узлах
         for x in range(-half, half + 1, 2):
             for z in range(-half, half + 1, 2):
                 if (x, z) == (0, 0):
                     continue
                 px, py = self.world_to_screen(x, z, 0)
                 pygame.draw.circle(self.screen, self.COLOR_MARKER, (px, py), 4)
-        # Центр (0,0) – жёлтый
         cx, cy = self.world_to_screen(0, 0, 0)
         pygame.draw.circle(self.screen, (255, 255, 0), (cx, cy), 6)
 
-    def draw_ui(self):
+    def draw_ui(self, bot=None):
         lines = [
             f"AGI Virtual World (Pygame)",
             f"Cam: ({self.cam_x:.1f}, {self.cam_z:.1f})  Yaw: {self.yaw:.1f}°  Pitch: {self.pitch:.1f}°  Zoom: {self.zoom:.2f}",
             f"Red cells: {len(self.red_cells)}",
             "Arrows: move | A/D: rotate | W/S: tilt | Scroll: zoom | Space: reset | Esc: exit"
         ]
+        if bot:
+            lines.append(f"Bot pos: ({bot.x:.1f}, {bot.z:.1f})  Steps: {len(bot.visited_nodes)-1}  Seg: {bot.segment_length}")
         y = 10
         for line in lines:
             text = self.font.render(line, True, (255, 255, 255))
@@ -134,7 +142,6 @@ class WorldModel:
         keys = pygame.key.get_pressed()
         speed = 0.3 / self.zoom
 
-        # Движение камеры стрелками
         if keys[pygame.K_UP]:
             self.cam_x += math.sin(math.radians(self.yaw)) * speed
             self.cam_z += math.cos(math.radians(self.yaw)) * speed
@@ -148,12 +155,10 @@ class WorldModel:
             self.cam_x += math.cos(math.radians(self.yaw)) * speed
             self.cam_z -= math.sin(math.radians(self.yaw)) * speed
 
-        # Поворот A/D
         if keys[pygame.K_a]:
             self.yaw -= 2.0
         if keys[pygame.K_d]:
             self.yaw += 2.0
-        # Наклон W/S
         if keys[pygame.K_w]:
             self.pitch += 1.0
         if keys[pygame.K_s]:
@@ -167,7 +172,7 @@ class WorldModel:
         self.draw_grid()
         if bot:
             bot.draw(self.screen, self.world_to_screen, self.get_scale())
-        self.draw_ui()
+        self.draw_ui(bot)
         pygame.display.flip()
 
     # ---------- Основной цикл ----------
@@ -175,8 +180,9 @@ class WorldModel:
         while self.running:
             self.handle_events()
             self.update_camera()
+            if bot:
+                bot.update(self)
             self.draw(bot)
             self.clock.tick(60)
         pygame.quit()
-
 
