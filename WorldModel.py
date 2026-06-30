@@ -24,10 +24,8 @@ class WorldModel:
         self.MIN_ZOOM = 0.2
         self.MAX_ZOOM = 3.0
 
-        # Красные ячейки
-        self.red_cells = [
-            (-6, -6), (-4, -4), (-8, 0), (2, 4), (6, -2), (0, 8), (-8, -8)
-        ]
+        # Список объектов
+        self.objects = []
 
         pygame.init()
         self.screen = pygame.display.set_mode((self.width, self.height))
@@ -35,7 +33,29 @@ class WorldModel:
         self.clock = pygame.time.Clock()
         self.font = pygame.font.Font(None, 24)
 
-    # ---------- Преобразование координат ----------
+    def remove_object(self, obj):
+        if obj in self.objects:
+            self.objects.remove(obj)
+            print(f"Объект {obj} удалён")
+        else:
+            print(f"Объект {obj} не найден в списке")
+
+    def get_object_at(self, x, z):
+        for obj in self.objects:
+            if hasattr(obj, 'size'):  # GameObject
+                half = obj.size * 0.5
+                if abs(x - obj.x) < half and abs(z - obj.z) < half:
+                    return obj
+            elif hasattr(obj, 'body_w') and hasattr(obj, 'body_d'):  # Predator
+                half_w = obj.body_w / 2
+                half_d = obj.body_d / 2
+                if abs(x - obj.x) < half_w and abs(z - obj.z) < half_d:
+                    return obj
+            elif hasattr(obj, 'radius'):  # Food (яблоко)
+                if abs(x - obj.x) < obj.radius and abs(z - obj.z) < obj.radius:
+                    return obj
+        return None
+
     def world_to_screen(self, wx, wz, wy=0):
         dx = wx - self.cam_x
         dz = wz - self.cam_z
@@ -61,31 +81,15 @@ class WorldModel:
     def get_scale(self):
         return self.CELL_SIZE * self.zoom
 
-    # ---------- Методы проверки ----------
-    def is_cell_red(self, x, z):
-        half = 1
-        for (cx, cz) in self.red_cells:
-            if abs(x - cx) < half and abs(z - cz) < half:
-                return True
-        return False
-
     def is_within_world(self, x, z):
         half = self.WORLD_SIZE // 2
         return -half <= x <= half and -half <= z <= half
 
-    # ---------- Отрисовка слоёв ----------
-    def draw_red_cells(self):
-        half = 1
-        for (cx, cz) in self.red_cells:
-            corners = [
-                (cx - half, cz - half),
-                (cx + half, cz - half),
-                (cx + half, cz + half),
-                (cx - half, cz + half)
-            ]
-            screen_corners = [self.world_to_screen(x, z, 0) for (x, z) in corners]
-            pygame.draw.polygon(self.screen, (255, 0, 0), screen_corners)
+    # ---------- Методы для работы с объектами ----------
+    def add_object(self, obj):
+        self.objects.append(obj)
 
+    # ---------- Отрисовка ----------
     def draw_grid(self):
         half = self.WORLD_SIZE // 2
         for z in range(-half, half + 1, 2):
@@ -110,18 +114,32 @@ class WorldModel:
         lines = [
             f"AGI Virtual World (Pygame)",
             f"Cam: ({self.cam_x:.1f}, {self.cam_z:.1f})  Yaw: {self.yaw:.1f}°  Pitch: {self.pitch:.1f}°  Zoom: {self.zoom:.2f}",
-            f"Red cells: {len(self.red_cells)}",
+            f"Objects: {len(self.objects)}",
             "Arrows: move | A/D: rotate | W/S: tilt | Scroll: zoom | Space: reset | Esc: exit"
         ]
         if bot:
             lines.append(f"Bot pos: ({bot.x:.1f}, {bot.z:.1f})  Steps: {len(bot.visited_nodes)-1}  Seg: {bot.segment_length}")
+            if bot.nearby_object:
+                params = bot.get_object_params(['type', 'temperature'])
+                lines.append(f"Nearby: {params.get('type', '')} temp={params.get('temperature', '')}")
         y = 10
         for line in lines:
             text = self.font.render(line, True, (255, 255, 255))
             self.screen.blit(text, (10, y))
             y += 25
 
-    # ---------- Обработка событий и обновление ----------
+    def draw(self, bot=None):
+        self.screen.fill(self.COLOR_BG)
+        self.draw_grid()
+        # Отрисовка объектов (поверх сетки)
+        for obj in self.objects:
+            obj.draw(self.screen, self.world_to_screen)
+        if bot:
+            bot.draw(self.screen, self.world_to_screen, self.get_scale())
+        self.draw_ui(bot)
+        pygame.display.flip()
+
+    # ---------- Обработка событий и цикл ----------
     def handle_events(self):
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -165,17 +183,6 @@ class WorldModel:
             self.pitch -= 1.0
         self.pitch = max(self.MIN_PITCH, min(self.MAX_PITCH, self.pitch))
 
-    # ---------- Главный метод отрисовки ----------
-    def draw(self, bot=None):
-        self.screen.fill(self.COLOR_BG)
-        self.draw_red_cells()
-        self.draw_grid()
-        if bot:
-            bot.draw(self.screen, self.world_to_screen, self.get_scale())
-        self.draw_ui(bot)
-        pygame.display.flip()
-
-    # ---------- Основной цикл ----------
     def run(self, bot=None):
         while self.running:
             self.handle_events()
