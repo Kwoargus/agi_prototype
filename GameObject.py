@@ -137,3 +137,71 @@ class Food:
             leaf_left = world_to_screen_func(self.x-0.4 - self.leaf_size, self.z+0.3, self.radius + self.leaf_size*0.5)
             leaf_right = world_to_screen_func(self.x-0.6 + self.leaf_size, self.z+0.05, self.radius + self.leaf_size*0.5)
             pygame.draw.polygon(screen, (0, 200, 0), [leaf_top, leaf_left, leaf_right])
+
+
+class Explosion:
+    def __init__(self, x, z):
+        self.x = x
+        self.z = z
+        self.lifetime = 3.0  # секунд
+        self.age = 0.0
+        self.phase = 0  # 0-белый, 1-жёлтый, 2-красный
+        self.rotation = 0
+        self.scale = 1.0
+        self.active = True
+        self.color_sequence = [(255, 255, 255), (255, 255, 0), (255, 0, 0)]
+        self.size = 2.0
+
+    def update(self, dt):
+        self.age += dt
+        if self.age > self.lifetime:
+            self.active = False
+            return
+        # Меняем цвет каждую секунду
+        phase_duration = 1.0
+        phase_index = int(self.age // phase_duration)
+        if phase_index >= len(self.color_sequence):
+            phase_index = len(self.color_sequence) - 1
+        self.phase = phase_index
+        # Поворот на 120° и увеличение в 2 раза при смене фазы
+        # (упрощённо: увеличиваем масштаб пропорционально времени)
+        self.scale = 1.0 + (self.age / self.lifetime) * 2.0
+        self.rotation = 120 * (self.age // 1.0)  # градусов
+
+    def draw(self, screen, world_to_screen_func):
+        if not self.active:
+            return
+        # Рисуем пирамиду (перевёрнутая остриём вниз)
+        half = self.size * 0.5 * self.scale
+        base_corners = [
+            (self.x - half, self.z - half),
+            (self.x + half, self.z - half),
+            (self.x + half, self.z + half),
+            (self.x - half, self.z + half)
+        ]
+        # Основание на уровне земли, вершина внизу
+        top_world = (self.x, self.z, -self.size * 0.8 * self.scale)  # остриё вниз
+
+        base_screen = [world_to_screen_func(x, z, 0) for (x, z) in base_corners]
+        top_screen = world_to_screen_func(*top_world)
+
+        color = self.color_sequence[self.phase]
+        # Четыре треугольные грани
+        for i in range(4):
+            j = (i+1) % 4
+            triangle = [base_screen[i], base_screen[j], top_screen]
+            pygame.draw.polygon(screen, color, triangle)
+
+        # Рисуем молнию (несколько зигзагов)
+        # Упрощённо: нарисуем несколько линий от вершины к основанию с рывками
+        lightning_color = (200, 200, 200)
+        for i in range(4):
+            x1, y1 = base_screen[i]
+            x2, y2 = base_screen[(i+1)%4]
+            # Несколько случайных зигзагов (захардкодим)
+            for step in range(0, 10, 2):
+                t = step / 10.0
+                x_mid = (x1 + x2) / 2 + (y1 - y2) * 0.2 * (1 - t)
+                y_mid = (y1 + y2) / 2 + (x2 - x1) * 0.2 * (1 - t)
+                pygame.draw.line(screen, lightning_color, (x1, y1), (x_mid, y_mid), 2)
+                pygame.draw.line(screen, lightning_color, (x_mid, y_mid), (x2, y2), 2)

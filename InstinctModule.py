@@ -1,27 +1,44 @@
 from __future__ import annotations
-from base_strategy import ReactionModule
-from base_strategy import Perception
-from base_strategy import ActionSuggestion
 from typing import List, Dict, Optional, Any
+from base_strategy import Perception, ActionSuggestion
 
-class InstinctModule(ReactionModule):
-    def process(self, perception: Perception, context: Dict) -> List[ActionSuggestion]:
-        # Преобразуем восприятие в вектор признаков
-        feature_vector = self._extract_features(perception)
-        # Ищем в таблице инстинктов ближайшие паттерны (можно через ANN)
-        patterns = self.memory.find_instinct_patterns(feature_vector, top_k=3)
+class InstinctModule:
+    def __init__(self, patterns: List[Dict]):
+        """
+        patterns: список словарей вида {'pattern': {'signals': {...}}, 'action': {'action': '...'}}
+        """
+        self.patterns = patterns
+
+    def process(self, perception: Perception, context: Optional[Dict] = None) -> List[ActionSuggestion]:
+        print(f"InstinctModule.process: perception={perception}")
+        for entry in self.patterns:
+            pattern = entry.get('pattern', {})
+            signals = pattern.get('signals', {})
+            print(f"Checking pattern signals: {signals}")
+
         suggestions = []
-        for pattern in patterns:
-            action_seq = pattern.action_sequence  # список action_id
-            # Создаём предложение на первое действие последовательности
-            suggestions.append(ActionSuggestion(
-                action_id=action_seq[0],
-                priority=pattern.confidence,
-                params={'remaining_sequence': action_seq[1:]}
-            ))
+        for entry in self.patterns:
+            pattern = entry.get('pattern', {})
+            signals = pattern.get('signals', {})
+            # Проверяем, что все сигналы из паттерна присутствуют в восприятии с соответствующими значениями
+            match = True
+            for key, expected_value in signals.items():
+                if key not in perception or perception[key] != expected_value:
+                    match = False
+                    break
+            if match:
+                action = entry.get('action', {})
+                action_id = action.get('action', 'run_away')
+                suggestions.append(ActionSuggestion(action_id=action_id, priority=1.0))
         return suggestions
 
+    def get_best_action(self, perception: Perception) -> Optional[ActionSuggestion]:
+        suggestions = self.process(perception)
+        if suggestions:
+            return max(suggestions, key=lambda s: s.priority)
+        return None
+
     def update(self, reward: float, action_taken: ActionSuggestion) -> None:
-        # Если последовательность привела к успеху, усиливаем паттерн
-        if reward > 0:
-            self.memory.reinforce_instinct_pattern(action_taken)
+        # Пока не реализовано обучение
+        pass
+

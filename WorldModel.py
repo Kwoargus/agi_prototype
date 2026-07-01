@@ -1,5 +1,6 @@
 import pygame
 import math
+from GameObject import Explosion
 
 class WorldModel:
     def __init__(self, width=1200, height=800):
@@ -32,6 +33,10 @@ class WorldModel:
         pygame.display.set_caption("AGI Virtual World (Pygame)")
         self.clock = pygame.time.Clock()
         self.font = pygame.font.Font(None, 24)
+
+        self.explosions = []
+        self.explosion_timer = 10.0  # через 10 секунд после старта
+        self.bot = None  # ссылка на бота
 
     def remove_object(self, obj):
         if obj in self.objects:
@@ -131,13 +136,21 @@ class WorldModel:
     def draw(self, bot=None):
         self.screen.fill(self.COLOR_BG)
         self.draw_grid()
-        # Отрисовка объектов (поверх сетки)
+
         for obj in self.objects:
             obj.draw(self.screen, self.world_to_screen)
+
+        # Отрисовка взрывов (до обновления экрана)
+        for expl in self.explosions:
+            expl.draw(self.screen, self.world_to_screen)
+
         if bot:
             bot.draw(self.screen, self.world_to_screen, self.get_scale())
+
         self.draw_ui(bot)
-        pygame.display.flip()
+        pygame.display.flip()  # теперь после всех отрисовок
+
+
 
     # ---------- Обработка событий и цикл ----------
     def handle_events(self):
@@ -184,6 +197,7 @@ class WorldModel:
         self.pitch = max(self.MIN_PITCH, min(self.MAX_PITCH, self.pitch))
 
     def run(self, bot=None):
+        self.bot = bot  # сохраняем ссылку
         while self.running:
             self.handle_events()
             self.update_camera()
@@ -191,5 +205,32 @@ class WorldModel:
                 bot.update(self)
             self.draw(bot)
             self.clock.tick(60)
-        pygame.quit()
 
+            # Обновляем таймер
+            if self.explosion_timer > 0:
+                self.explosion_timer -= 1 / 60
+                if self.explosion_timer <= 0:
+                    self.trigger_explosion()
+            # Обновляем взрывы
+            for expl in self.explosions[:]:
+                expl.update(1 / 60)
+                if not expl.active:
+                    self.explosions.remove(expl)
+
+
+
+    def trigger_explosion(self):
+        print("Взрыв создан!")
+        # Появляется в случайном углу
+        corners = [(-8, -8), (-8, 8), (8, -8), (8, 8)]
+        import random
+        x, z = random.choice(corners)
+        explosion = Explosion(x, z)
+        self.explosions.append(explosion)
+        # Оповещаем бота
+        if self.bot:
+            self.bot.notify('explosion', {
+                'sound': 'loud crash',
+                'vision': 'bright_flash',
+                'position': (x, z)
+            })

@@ -1,8 +1,12 @@
 import pygame
 import math
+from ReflexModule import ReflexModule
+from InstinctModule import InstinctModule
+from base_strategy import Perception, ActionSuggestion
+import random
 
 class Bot:
-    def __init__(self, x, z, angle=0, move_delay=5, reflex_rules=None):
+    def __init__(self, x, z, angle=0, move_delay=5, reflex_rules=None, instinct_patterns=None):
         self.x = x
         self.z = z
         self.angle = angle
@@ -26,17 +30,29 @@ class Bot:
         self.visited_nodes = [(self.x, self.z)]
         self.visited_edges = []
 
-        self.reflex_rules = reflex_rules if reflex_rules else []
+        # Модули рефлексов и инстинктов
+        self.reflex_module = ReflexModule(reflex_rules if reflex_rules else [])
+        self.instinct_module = InstinctModule(instinct_patterns if instinct_patterns else [])
+
         self.nearby_object = None
         self.nearby_params = {}
 
-    def is_edge_visited(self, x1, z1, x2, z2):
-        """Проверяет, было ли ребро между двумя точками уже пройдено."""
-        for (a, b), (c, d) in self.visited_edges:
-            if (a == x1 and b == z1 and c == x2 and d == z2) or (a == x2 and b == z2 and c == x1 and d == z1):
-                return True
-        return False
+        # Состояние убегания
+        self.runaway_target = None       # направление (dx, dz)
+        self.awaiting_steps = 0          # сколько шагов осталось ждать после достижения границы
 
+        self.runaway_dir_index = None
+
+        self.visited_edges_set = set()  # для быстрой проверки
+
+
+    def _add_edge(self, node1, node2):
+        # сортируем, чтобы (a,b) и (b,a) считались одинаковыми
+        if node1 > node2:
+            node1, node2 = node2, node1
+        self.visited_edges_set.add((node1, node2))
+
+    # ---------- Взаимодействие с объектами ----------
     def setInform(self, obj):
         self.nearby_object = obj
         self.nearby_params = obj.get(['type', 'temperature', 'smell', 'sound', 'name'])
@@ -47,114 +63,101 @@ class Bot:
             return self.nearby_object.get(params)
         return {}
 
-    def apply_reflexes(self, obj_params):
-        if not self.reflex_rules or not obj_params:
-            return None
-        for rule in self.reflex_rules:
-            sense_type = rule.get('sense_type')
-            signal_type = rule.get('signal_type')
-            threshold = rule.get('signal_threshold')
-            action = rule.get('action')
-            if signal_type in obj_params:
-                value = obj_params[signal_type]
-                # если сигнал - температура, то сравниваем
-                if value > threshold:
-                    if not sense_type or sense_type == obj_params.get('type', ''):
-                        print(f"Рефлекс сработал: {action} (threshold={threshold}, value={value})")
-                        return action
-        return None
-
-    def handle_predator(self, world, obj_params):
-        smell = obj_params.get('smell')
-        sound = obj_params.get('sound')
-        action = None
-        for rule in self.reflex_rules:
-            signal_type = rule.get('signal_type')
-            if signal_type == smell or signal_type == sound:
-                action = rule.get('action')
-                break
+    # ---------- Выполнение действий от рефлексов ----------
+    def execute_action(self, action, world):
         if action == 'move_on':
-            print("Рефлекс predator: move_on! Разворот и уход на 2 клетки.")
+            print("Рефлекс: move_on! Разворот и уход на 2 клетки.")
             self.dir_index = (self.dir_index + 2) % 4
             for _ in range(2):
                 if not self._move_one_step(world):
                     break
-
-    def handle_food(self, world, obj):
-        """Обработка встречи с едой."""
-        if self.nearby_object is None:
-            return
-        # Проверим правило: ищем по signal_type = 'smell' или 'type'
-        action = None
-        for rule in self.reflex_rules:
-            signal_type = rule.get('signal_type')
-            if signal_type == 'smell_food' and self.nearby_params.get('smell') == 'food_smell':
-                action = rule.get('action')
-                break
-            elif signal_type == 'food_smell' and self.nearby_params.get('type') == 'food':
-                action = rule.get('action')
-                break
-        if action == 'grab':
-            print("Рефлекс food: grab! Захват еды.")
+        elif action == 'grab':
+            print("Рефлекс: grab! Захват еды.")
             self._grab_object(world)
+        elif action == 'avoid':
+            print("Рефлекс: avoid! Отворачиваем.")
+            self._turn_right()
+        else:
+            print(f"Неизвестное действие: {action}")
 
     def _grab_object(self, world):
         if self.nearby_object is None:
             return False
         target_x = self.nearby_object.x
         target_z = self.nearby_object.z
-        # Проверяем, что объект в соседней клетке
         dx = target_x - self.x
         dz = target_z - self.z
         if abs(dx) > self.step_size or abs(dz) > self.step_size:
             print("Объект не в соседней клетке")
             return False
-        # Удаляем объект из мира
         world.remove_object(self.nearby_object)
-        # Перемещаем бота в клетку объекта
+        self.visited_edges.append(((self.x, self.z), (target_x, target_z)))
+        self._add_edge((self.x, self.z), (target_x, target_z))
         self.x, self.z = target_x, target_z
         self.visited_nodes.append((self.x, self.z))
-        self.visited_edges.append(((self.x, self.z), (target_x, target_z)))  # сохраняем ребро
-        print(f"Bot схватил {self.nearby_object.name if hasattr(self.nearby_object, 'name') else 'еду'} и переместился в ({self.x}, {self.z})")
+        print(
+            f"Bot схватил {self.nearby_object.name if hasattr(self.nearby_object, 'name') else 'еду'} и переместился в ({self.x}, {self.z})")
         self.nearby_object = None
         self.nearby_params = {}
         return True
 
-    def _choose_step(self, world):
-        # Сначала проверяем текущее направление, если ребро не посещено и клетка свободна
-        dx, dz = self.directions[self.dir_index]
-        next_x = self.x + dx * self.step_size
-        next_z = self.z + dz * self.step_size
-        if (world.is_within_world(next_x, next_z) and
-            world.get_object_at(next_x, next_z) is None and
-            not self.is_edge_visited(self.x, self.z, next_x, next_z)):
-            return dx, dz
-
-        # Иначе пробуем другие направления в порядке: право, лево, назад
-        for i in [1, 3, 2]:  # 1=право, 3=лево, 2=назад (относительно текущего)
-            idx = (self.dir_index + i) % 4
-            dx, dz = self.directions[idx]
-            next_x = self.x + dx * self.step_size
-            next_z = self.z + dz * self.step_size
-            if (world.is_within_world(next_x, next_z) and
-                world.get_object_at(next_x, next_z) is None and
-                not self.is_edge_visited(self.x, self.z, next_x, next_z)):
-                return dx, dz
-
-        # Если ни одно непосещённое ребро не доступно, пробуем любое свободное направление (даже посещённое)
-        for i in [0, 1, 3, 2]:
-            idx = (self.dir_index + i) % 4
-            dx, dz = self.directions[idx]
-            next_x = self.x + dx * self.step_size
-            next_z = self.z + dz * self.step_size
-            if world.is_within_world(next_x, next_z) and world.get_object_at(next_x, next_z) is None:
-                return dx, dz
-
-        return None, None
-
 
     def _move_one_step(self, world):
         dx, dz = self.directions[self.dir_index]
+        next_x = self.x + dx * self.step_size
+        next_z = self.z + dz * self.step_size
+        if world.is_within_world(next_x, next_z) and world.get_object_at(next_x, next_z) is None:
+            self.visited_edges.append(((self.x, self.z), (next_x, next_z)))
+            self._add_edge((self.x, self.z), (next_x, next_z))
+            self.x, self.z = next_x, next_z
+            self.visited_nodes.append((self.x, self.z))
+            return True
+        return False
+
+
+    def _turn_right(self):
+        self.dir_index = (self.dir_index + 1) % 4
+
+
+    # ---------- Уведомление о глобальном событии (взрыв) ----------
+    def notify(self, event_type, data):
+        if event_type == 'explosion':
+            # Формируем восприятие из сигналов
+            perception = Perception({
+                'sound': data.get('sound'),
+                'vision': data.get('vision'),
+                'position': data.get('position')
+            })
+            print(f"Perception for instinct: {perception}")
+            suggestion = self.instinct_module.get_best_action(perception)
+            print(f"Instinct suggestion: {suggestion}")
+            if suggestion:
+                self.execute_instinct(suggestion.action_id, data.get('position'))
+
+    def execute_instinct(self, action_id, target_pos):
+        if action_id == 'run_away':
+            dx = self.x - target_pos[0]
+            dz = self.z - target_pos[1]
+            # Выбираем доминирующую ось (ближайшее направление из 4)
+            if abs(dx) >= abs(dz):
+                if dx >= 0:
+                    dir_vec = (1, 0)  # вправо
+                else:
+                    dir_vec = (-1, 0)  # влево
+            else:
+                if dz >= 0:
+                    dir_vec = (0, 1)  # вниз (по Z+)
+                else:
+                    dir_vec = (0, -1)  # вверх (по Z-)
+            self.runaway_target = dir_vec
+            self.awaiting_steps = 0
+            self.moving = False
+            print(f"Убегаем в направлении {dir_vec}")
+
+
+
+    def _move_in_direction(self, dir_index, world):
+        dx, dz = self.directions[dir_index]
         next_x = self.x + dx * self.step_size
         next_z = self.z + dz * self.step_size
         if world.is_within_world(next_x, next_z) and world.get_object_at(next_x, next_z) is None:
@@ -164,7 +167,12 @@ class Bot:
             return True
         return False
 
+
     def update(self, world):
+        if self.runaway_target:
+            self._update_runaway(world)
+            return
+
         if not self.moving:
             return
 
@@ -173,58 +181,93 @@ class Bot:
             return
         self.frame_counter = 0
 
-        # Проверяем соседние клетки на объекты
-        for (dx_check, dz_check) in self.directions:
+        dirs = [(0, 1), (1, 0), (0, -1), (-1, 0)]
+        candidates = []  # непройденные ребра
+        fallback = []  # доступные, но уже пройденные
+
+        for (dx, dz) in dirs:
+            next_x = self.x + dx * self.step_size
+            next_z = self.z + dz * self.step_size
+
+            if not world.is_within_world(next_x, next_z):
+                continue
+            if world.get_object_at(next_x, next_z) is not None:
+                continue
+
+            node1 = (self.x, self.z)
+            node2 = (next_x, next_z)
+            if node1 > node2:
+                node1, node2 = node2, node1
+
+            if (node1, node2) not in self.visited_edges_set:
+                candidates.append((dx, dz))
+            else:
+                fallback.append((dx, dz))
+
+        if candidates:
+            dx, dz = random.choice(candidates)  # случайный выбор для разнообразия
+        elif fallback:
+            dx, dz = random.choice(fallback)  # идём по пройденному ребру, чтобы выйти из тупика
+        else:
+            # Нет доступных направлений – останавливаемся
+            self.moving = False
+            print("Обход завершён: нет доступных направлений")
+            return
+
+        # Делаем шаг
+        next_x = self.x + dx * self.step_size
+        next_z = self.z + dz * self.step_size
+        self.visited_edges.append(((self.x, self.z), (next_x, next_z)))
+        self._add_edge((self.x, self.z), (next_x, next_z))
+        self.x, self.z = next_x, next_z
+        self.visited_nodes.append((self.x, self.z))
+
+        # Проверяем объекты в соседних клетках (рефлексы)
+        for (dx_check, dz_check) in dirs:
             check_x = self.x + dx_check * self.step_size
             check_z = self.z + dz_check * self.step_size
             obj = world.get_object_at(check_x, check_z)
             if obj:
                 self.setInform(obj)
-                params = self.nearby_params
-                if params.get('type') == 'predator':
-                    self.handle_predator(world, params)
-                    return
-                elif params.get('type') == 'food':
-                    self.handle_food(world, obj)
-                    return
-                else:
-                    self.apply_reflexes(params)
+                print(f"Object found: {obj}, params: {self.nearby_params}")
+                perception = Perception(self.nearby_params.copy())
+                suggestion = self.reflex_module.get_best_action(perception)
+                print(f"Reflex suggestion: {suggestion}")
+                if suggestion:
+                    self.execute_action(suggestion.action_id, world)
                 break
-            # Выбор направления шага
-            dx, dz = self._choose_step(world)
-            if dx is None:
-                # Если нет свободного направления, поворачиваем и выходим
-                self._turn_right()
-                return
-
-            # Выполняем шаг
-            next_x = self.x + dx * self.step_size
-            next_z = self.z + dz * self.step_size
-            self.visited_edges.append(((self.x, self.z), (next_x, next_z)))
-            self.x, self.z = next_x, next_z
-            self.visited_nodes.append((self.x, self.z))
-            self.step_count += 1
-            if self.step_count == self.segment_length:
-                self._turn_right()
-
-        # Обычный шаг
-        if self._move_one_step(world):
-            self.step_count += 1
-            if self.step_count == self.segment_length:
-                self._turn_right()
-        else:
-            self._turn_right()
 
         if len(self.visited_nodes) > self.max_steps:
             self.moving = False
+            print("Достигнут лимит шагов")
 
-    def _turn_right(self):
-        self.dir_index = (self.dir_index + 1) % 4
-        self.step_count = 0
-        self.turns += 1
-        if self.turns % 2 == 0:
-            self.segment_length += 1
 
+
+
+
+    def _update_runaway(self, world):
+        dx, dz = self.runaway_target
+        next_x = self.x + dx * self.step_size
+        next_z = self.z + dz * self.step_size
+
+        if world.is_within_world(next_x, next_z) and world.get_object_at(next_x, next_z) is None:
+            self.visited_edges.append(((self.x, self.z), (next_x, next_z)))
+            self._add_edge((self.x, self.z), (next_x, next_z))
+            self.x, self.z = next_x, next_z
+            self.visited_nodes.append((self.x, self.z))
+            self.awaiting_steps = 0
+        else:
+            if self.awaiting_steps == 0:
+                self.awaiting_steps = 50
+            else:
+                self.awaiting_steps -= 1
+                if self.awaiting_steps <= 0:
+                    self.runaway_target = None
+                    self.moving = True
+                    self.frame_counter = 0
+                    print("Возврат к спирали")
+
+    # ---------- Отрисовка ----------
     def draw_path(self, screen, world_to_screen_func):
         if not self.visited_edges:
             return
