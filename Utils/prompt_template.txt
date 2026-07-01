@@ -1,0 +1,30 @@
+Вот ошибка:
+
+
+Вот код app.py:
+
+
+Вот код Bot.py:
+
+
+Вот код GameObject.py:
+
+
+Вот код WorlModel.py:
+
+
+Вот код db_coonector.py:
+
+
+Вот код ReflexModule.py:
+
+
+Вот код InstinctModule.py:
+
+
+Вот код base_strategy.py
+
+
+
+
+Как исправить?
